@@ -13,7 +13,7 @@ Data is stored by observation date and expiry:
 
 \<observation\_date>/  
 └── \<expiry\_date>/  
-    ├── calls.csv  
+    \t├── calls.csv  
     └── puts.csv  
 
 
