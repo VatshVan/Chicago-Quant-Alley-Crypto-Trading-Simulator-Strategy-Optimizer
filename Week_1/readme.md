@@ -13,8 +13,8 @@ Data is stored by observation date and expiry:
 
 \<observation\_date>/  
 └── \<expiry\_date>/  
-  ├── calls.csv  
-  └── puts.csv  
+    ├── calls.csv  
+    └── puts.csv  
 
 
 - `<observation_date>`: Date data was recorded (format: `DD-MM-YYYY`)
