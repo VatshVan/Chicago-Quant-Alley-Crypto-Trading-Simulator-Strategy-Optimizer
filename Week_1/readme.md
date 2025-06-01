@@ -11,10 +11,10 @@ This script collects 5-minute OHLCV data for BTC options (Calls and Puts) from D
 Data is stored by observation date and expiry:
 
 
-\<observation\_date>/"\n"
-└── \<expiry\_date>/
-├── calls.csv
-└── puts.csv
+\<observation\_date>/  
+└── \<expiry\_date>/  
+├── calls.csv  
+└── puts.csv  
 
 
 - `<observation_date>`: Date data was recorded (format: `DD-MM-YYYY`)
