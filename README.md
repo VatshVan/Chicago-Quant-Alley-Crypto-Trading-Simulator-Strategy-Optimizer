@@ -73,7 +73,7 @@ This repository will evolve over time to include:
 - [x] Week 1: Quant Trading Book (E. Chan)
 - [x] Week 2: Data Collection from Delta Exchange
 - [x] Week 3: Complete NPTEL + Start Avishek Nag Book
-- [ ] Week 2 Assignment (Pending)
+- [ ] Week 3 Assignment (Pending)
 - [ ] Week 4: Build Core Simulator
 
 ---
