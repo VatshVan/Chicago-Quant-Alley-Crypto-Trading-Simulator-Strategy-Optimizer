@@ -39,7 +39,7 @@ This module emulates a trading environment for options strategies. It performs t
 **Key Feature:**  
 The simulator supports modular strategy injection, allowing any strategy class with an `onMarketData` interface to interact with the engine.
 
-> 💡 **Tip**: Always use `drop_duplicates` on `pnl_history` before saving CSVs to avoid timestamp clutter in plots.
+> **Note**: Always use `drop_duplicates` on `pnl_history` before saving CSVs to avoid timestamp clutter in plots.
 
 ---
 
@@ -51,9 +51,9 @@ Implements a simple intraday short straddle strategy:
 - Exits when deviation in futures crosses 1% or if net PnL breaches ±500.
 - Resets daily and forcefully exits positions if left open overnight.
 
-> 💡 **Note**: In the forced exit logic, ensure that the `onOrder()` is called with correct prices to mirror real-time exit. This keeps the execution log aligned for plotting.
+> **Note**: In the forced exit logic, ensure that the `onOrder()` is called with correct prices to mirror real-time exit. This keeps the execution log aligned for plotting.
 
-> ⚙️ **Robustness**: Failsafe conditions such as missing futures prices or incomplete data are handled with warnings and skipped execution.
+> **Robustness**: Failsafe conditions such as missing futures prices or incomplete data are handled with warnings and skipped execution.
 
 ---
 
@@ -103,16 +103,16 @@ Implements a simple intraday short straddle strategy:
 
 ## Learnings and Improvements
 
-### ✅ What Worked:
+### What Worked:
 - Slippage modeling and clean-order execution abstraction.
 - PnL and turnover tracking synced per tick.
 - Forced exit logic avoided overnight positions.
 
-### ⚠️ What Didn’t:
+### What Didn’t:
 - Simple exit condition (deviation > 1%) not adaptive to volatility.
 - The strategy can be made more reactive with the management of Greeks or delta hedging.
 
-### 🔧 Next Steps:
+### Next Steps:
 - Add volatility-adjusted thresholds.
 - Integrate real-time Greek computation.
 - Support multiple entry legs (e.g., spreads or condors).
