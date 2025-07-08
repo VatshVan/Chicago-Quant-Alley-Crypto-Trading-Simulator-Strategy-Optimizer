@@ -71,9 +71,9 @@ This repository will evolve over time to include:
 ## Roadmap
 
 - [x] Week 1: Quant Trading Book (E. Chan)
-- [x] Week 2: Data Collection from Delta Exchange
+- [x] Week 2: Data Collection from Delta Exchange(Assignment 1)
 - [x] Week 3: Complete NPTEL + Start Avishek Nag Book
-- [ ] Week 3 Assignment (Pending)
+- [x] Week 3 Assignment (Assignment 2)
 - [ ] Week 4: Build Core Simulator
 
 ---
