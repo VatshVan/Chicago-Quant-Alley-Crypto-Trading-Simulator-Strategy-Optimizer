@@ -2,7 +2,7 @@
 ### Build a Quantitative Strategy Simulator from Scratch
 
 **Authors:**  
-Vatsh Van : 24B2259  
+Vatsh Van : 24B2259   
 T Sai Dheeraj : 24B0960  
 
 ---
