@@ -3,10 +3,10 @@ import csv
 import os
 import time
 import random
-from collections import deque
 from datetime import datetime, timedelta, date, timezone
 from multiprocessing import Pool, cpu_count, Manager, Lock
-import sys  # for clean exit
+import sys
+import threading
 
 BASE_URL     = "https://api.delta.exchange/v2"
 WEIGHT_QUOTA = 10000       # API weight limit
@@ -17,24 +17,30 @@ MAX_RETRIES  = 5
 ERROR_LOG    = "api_errors.csv"
 
 manager = Manager()
-request_log = manager.list()
 log_lock = Lock()
 
-def check_quota(weight: int):
-    """Enforce API weight quota in a rolling 300s window (multiprocessing-safe)."""
-    global request_log, log_lock
+bucket_lock = threading.Lock()
+tokens = WEIGHT_QUOTA
+last_refill = time.time()
+refill_interval = 300
+
+def check_quota_token_bucket(weight: int):
+    """Enforce API weight quota using a token bucket algorithm (thread-safe)."""
+    global tokens, last_refill
     while True:
         now = time.time()
-        with log_lock:
-            while request_log and request_log[0][0] < now - 300:
-                request_log.pop(0)
-            current_weight = sum(w for _, w in request_log)
-            if current_weight + weight <= WEIGHT_QUOTA:
-                request_log.append((now, weight))
+        with bucket_lock:
+            elapsed = now - last_refill
+            if elapsed >= refill_interval:
+                tokens = WEIGHT_QUOTA
+                last_refill = now
+
+            if tokens >= weight:
+                tokens -= weight
                 return
-            earliest_timestamp, _ = request_log[0]
-            sleep_time = max((earliest_timestamp + 300) - now, 0.1)
-            print(f"[PAUSE] Quota {current_weight}/{WEIGHT_QUOTA} reached. Sleeping {sleep_time:.1f}s")
+
+            sleep_time = max(refill_interval - elapsed, 0.1)
+            print(f"[PAUSE] Quota exceeded. Sleeping {sleep_time:.1f}s")
         time.sleep(sleep_time)
 
 def request_with_retry(url: str, params: dict = None, retries: int = MAX_RETRIES) -> dict:
@@ -70,7 +76,7 @@ def fetch_all_products(retries: int = MAX_RETRIES) -> list:
     url = f"{BASE_URL}/products"
     for attempt in range(retries):
         try:
-            check_quota(CALL_WEIGHT)
+            check_quota_token_bucket(CALL_WEIGHT)
             resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
             resp.raise_for_status()
             data = resp.json()
@@ -84,30 +90,30 @@ def fetch_all_products(retries: int = MAX_RETRIES) -> list:
     sys.exit(1)
 
 def fetch_futures_ohlc(symbol: str, target_date: date) -> dict:
-    check_quota(CALL_WEIGHT)
+    """Fetch daily futures OHLC data. Raises error if fetch fails."""
+    check_quota_token_bucket(CALL_WEIGHT)
     start_dt = datetime(target_date.year, target_date.month, target_date.day, 0, 0, tzinfo=timezone.utc)
     end_dt   = start_dt + timedelta(days=1)
     start_ts, end_ts = int(start_dt.timestamp()), int(end_dt.timestamp())
     url = f"{BASE_URL}/history/candles"
     params = {"symbol": symbol, "resolution": "1d", "start": str(start_ts), "end": str(end_ts)}
+
     data = request_with_retry(url, params)
     if not data:
-        log_error("futures_ohlc", symbol, target_date, "Max retries exceeded")
-        return None
+        raise requests.HTTPError(f"Failed to fetch futures OHLC for {symbol} on {target_date}")
+
     bars = data.get("result", [])
     if not bars:
-        log_error("futures_ohlc", symbol, target_date, "No 1d bar returned")
-        return None
+        raise ValueError(f"No 1d bars returned for {symbol} on {target_date}")
+
     return bars[0]
 
 def fetch_option_candles(symbol: str, target_date: date) -> list:
-    """Fetch option candles. Raises HTTPError on failure, like fetch_futures_ohlc."""
-    check_quota(CALL_WEIGHT)
-
+    """Fetch option candles. Raises error if fetch fails."""
+    check_quota_token_bucket(CALL_WEIGHT)
     start_dt = datetime(target_date.year, target_date.month, target_date.day, 0, 0, tzinfo=timezone.utc)
     end_dt   = start_dt + timedelta(days=1)
     start_ts, end_ts = int(start_dt.timestamp()), int(end_dt.timestamp())
-
     url = f"{BASE_URL}/history/candles"
     params = {"symbol": symbol, "resolution": "5m", "start": str(start_ts), "end": str(end_ts)}
 
@@ -133,18 +139,19 @@ def process_single_day(args):
     current, underlying, expiry_offsets = args
     date_label = current.strftime("%d-%m-%Y")
     os.makedirs(date_label, exist_ok=True)
+
     try:
         ohlc = fetch_futures_ohlc(f"{underlying}USD", current)
-        if not ohlc:
-            return
         low_price, high_price = ohlc["low"], ohlc["high"]
     except Exception as e:
         log_error("process_single_day", f"{underlying}USD", current, str(e))
         return
+
     candidate_strikes = generate_strike_grid_from_ohlc(low_price, high_price)
     expiries = [current + timedelta(days=offset) for offset in expiry_offsets]
     calls_bucket = {exp.strftime("%d-%m-%Y"): [] for exp in expiries}
-    puts_bucket = {exp.strftime("%d-%m-%Y"): [] for exp in expiries}
+    puts_bucket  = {exp.strftime("%d-%m-%Y"): [] for exp in expiries}
+
     for exp in expiries:
         exp_label  = exp.strftime("%d-%m-%Y")
         exp_suffix = exp.strftime("%d%m%y")
@@ -155,7 +162,8 @@ def process_single_day(args):
                     bars = fetch_option_candles(symbol, current)
                 except Exception as e:
                     log_error("option_candles", symbol, current, str(e))
-                    continue  # skip this symbol and continue
+                    continue  # skip this symbol
+
                 for b in bars:
                     bucket[exp_label].append({
                         "symbol": symbol,
@@ -166,20 +174,20 @@ def process_single_day(args):
                         "close":  b["close"],
                         "volume": b["volume"],
                     })
+
     fieldnames = ["symbol", "time", "open", "high", "low", "close", "volume"]
     for exp_label, records in calls_bucket.items():
         subfolder = os.path.join(date_label, exp_label)
         os.makedirs(subfolder, exist_ok=True)
-        calls_path = os.path.join(subfolder, "calls.csv")
-        with open(calls_path, "w", newline="") as f:
+        with open(os.path.join(subfolder, "calls.csv"), "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(records)
+
     for exp_label, records in puts_bucket.items():
         subfolder = os.path.join(date_label, exp_label)
         os.makedirs(subfolder, exist_ok=True)
-        puts_path = os.path.join(subfolder, "puts.csv")
-        with open(puts_path, "w", newline="") as f:
+        with open(os.path.join(subfolder, "puts.csv"), "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(records)
@@ -199,4 +207,3 @@ if __name__ == "__main__":
     expiry_offsets = [0, 1, 2, 3]
 
     backfill_using_low_high(start, end, underlying, expiry_offsets)
-
