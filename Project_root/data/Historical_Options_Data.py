@@ -5,7 +5,7 @@ import time
 import random
 from collections import deque
 from datetime import datetime, timedelta, date, timezone
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, Manager, Lock
 
 BASE_URL     = "https://api.delta.exchange/v2"
 WEIGHT_QUOTA = 10000       # API weight limit
@@ -15,26 +15,31 @@ PCT_BAND     = 0.10        # strike band around daily OHLC
 MAX_RETRIES  = 5
 ERROR_LOG    = "api_errors.csv"
 
-request_log = deque()
+manager = Manager()
+request_log = manager.list()
+log_lock = Lock()
 
 def check_quota(weight: int):
-    """Enforce API weight quota in a rolling 300s window."""
-    global request_log
-    now = time.time()
+    """Enforce API weight quota in a rolling 300s window (multiprocessing-safe)."""
+    global request_log, log_lock
+    while True:
+        now = time.time()
+        with log_lock:
+            while request_log and request_log[0][0] < now - 300:
+                request_log.pop(0)
 
-    while request_log and request_log[0][0] < now - 300:
-        request_log.popleft()
+            current_weight = sum(w for _, w in request_log)
 
-    current_weight = sum(w for _, w in request_log)
+            if current_weight + weight <= WEIGHT_QUOTA:
+                request_log.append((now, weight))
+                return
 
-    if current_weight + weight > WEIGHT_QUOTA:
-        earliest = request_log[0][0]
-        sleep_time = (earliest + 300) - now
-        print(f"[PAUSE] Quota {current_weight}/{WEIGHT_QUOTA} reached. Sleeping {sleep_time:.1f}s")
+            earliest_timestamp, _ = request_log[0]
+            sleep_time = (earliest_timestamp + 300) - now
+            sleep_time = max(sleep_time, 0.1)
+            print(f"[PAUSE] Quota {current_weight}/{WEIGHT_QUOTA} reached. Sleeping {sleep_time:.1f}s")
+
         time.sleep(sleep_time)
-        return check_quota(weight)  
-    request_log.append((now, weight))
-
 
 def request_with_retry(url: str, params: dict, retries: int = MAX_RETRIES) -> dict:
     """Wrapper around requests.get with retry + exponential backoff."""
@@ -84,7 +89,6 @@ def fetch_futures_ohlc(symbol: str, target_date: date) -> dict:
         log_error("futures_ohlc", symbol, target_date, "No 1d bar returned")
         return None
     return bars[0]
-
 
 def fetch_option_candles(symbol: str, target_date: date) -> list:
     check_quota(CALL_WEIGHT)
