@@ -101,17 +101,25 @@ def fetch_futures_ohlc(symbol: str, target_date: date) -> dict:
     return bars[0]
 
 def fetch_option_candles(symbol: str, target_date: date) -> list:
+    """Fetch option candles. Raises HTTPError on failure, like fetch_futures_ohlc."""
     check_quota(CALL_WEIGHT)
+
     start_dt = datetime(target_date.year, target_date.month, target_date.day, 0, 0, tzinfo=timezone.utc)
     end_dt   = start_dt + timedelta(days=1)
     start_ts, end_ts = int(start_dt.timestamp()), int(end_dt.timestamp())
+
     url = f"{BASE_URL}/history/candles"
     params = {"symbol": symbol, "resolution": "5m", "start": str(start_ts), "end": str(end_ts)}
+
     data = request_with_retry(url, params)
     if not data:
-        log_error("option_candles", symbol, target_date, "Max retries exceeded")
-        return []
-    return data.get("result", [])
+        raise requests.HTTPError(f"Failed to fetch option candles for {symbol} on {target_date}")
+
+    bars = data.get("result", [])
+    if not bars:
+        raise ValueError(f"No 5m bars returned for {symbol} on {target_date}")
+
+    return bars
 
 def generate_strike_grid_from_ohlc(low: float, high: float, pct_band: float = PCT_BAND) -> list:
     raw_min, raw_max = low * (1 - pct_band), high * (1 + pct_band)
@@ -143,7 +151,11 @@ def process_single_day(args):
         for strike in candidate_strikes:
             for prefix, bucket in [("MARK:C", calls_bucket), ("MARK:P", puts_bucket)]:
                 symbol = f"{prefix}-{underlying}-{int(strike)}-{exp_suffix}"
-                bars   = fetch_option_candles(symbol, current)
+                try:
+                    bars = fetch_option_candles(symbol, current)
+                except Exception as e:
+                    log_error("option_candles", symbol, current, str(e))
+                    continue  # skip this symbol and continue
                 for b in bars:
                     bucket[exp_label].append({
                         "symbol": symbol,
@@ -187,3 +199,4 @@ if __name__ == "__main__":
     expiry_offsets = [0, 1, 2, 3]
 
     backfill_using_low_high(start, end, underlying, expiry_offsets)
+
